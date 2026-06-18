@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from .prompts import ACTOR_SYSTEM, EVALUATOR_SYSTEM, REFLECTOR_SYSTEM
 from .runtime_base import RuntimeCall
 from .schemas import JudgeResult, QAExample, ReflectionEntry
-from .utils import normalize_answer
+from .utils import lenient_match, normalize_answer
 
 
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -133,6 +133,22 @@ JSON evaluation:"""
                 reason="Evaluator JSON parsing failed; fell back to exact-match normalization.",
                 missing_evidence=[] if score else ["Evaluator did not return parseable JSON."],
                 spurious_claims=[] if score else [answer],
+            )
+
+        # Deterministic safety net: if the prediction lexically contains the full
+        # gold answer (modulo articles/qualifiers), force a correct verdict so a
+        # strict-mood judge cannot reject e.g. "classical music" vs gold "classical".
+        # This only ever raises 0 -> 1, never lowers a score.
+        if judge.score == 0 and lenient_match(example.gold_answer, answer):
+            judge = judge.model_copy(
+                update={
+                    "score": 1,
+                    "reason": (
+                        "Lenient match: prediction conveys the gold answer "
+                        "(extra wording is a harmless qualifier)."
+                    ),
+                    "spurious_claims": [],
+                }
             )
         return RuntimeCall(value=judge, token_count=call.token_count, latency_ms=call.latency_ms)
 

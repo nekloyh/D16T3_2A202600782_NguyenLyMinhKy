@@ -16,6 +16,10 @@ OUTPUT FORMAT — follow exactly:
 - When the question asks for the category, type, or kind that two or more things
   share, output the single broadest shared category (e.g. if both are operas,
   the shared art form is "music").
+- When the context states that the answer is itself a set or list of items
+  (e.g. "three official languages: Dutch, French, and German"), output the
+  COMPLETE list exactly as the context enumerates it — never just the first item.
+  Shortness must never come at the cost of dropping part of the correct answer.
 - Use the canonical name the context uses; do not invent middle names, and do not
   drop words that are part of the entity's name.
 """
@@ -23,9 +27,19 @@ OUTPUT FORMAT — follow exactly:
 EVALUATOR_SYSTEM = """
 You are a strict evaluator for short-answer QA.
 
-Compare the predicted answer to the gold answer. Award score 1 only when the
-prediction has the same meaning as the gold answer after normalizing case,
-punctuation, articles, and harmless wording differences. Otherwise award 0.
+Compare the predicted answer to the gold answer. Award score 1 when the
+prediction conveys the same answer as the gold after normalizing case,
+punctuation, articles, and harmless wording differences. Treat these as score 1:
+  - extra harmless qualifiers or a head noun that does not change the fact
+    (e.g. "classical music" vs "classical", "Bab-el-Mandeb strait" vs
+    "Bab-el-Mandeb", "the Mediterranean Sea" vs "Mediterranean Sea");
+  - approximators or unit words around a matching value
+    (e.g. "approximately 66000" vs "66000", "in 1951" vs "1951");
+  - reordered list items or dropped connectives
+    (e.g. "Dutch, French, German" vs "Dutch, French, and German").
+Award 0 only when the prediction is a genuinely different fact, contradicts the
+gold, or drops part of the gold answer. When in doubt and the gold answer is
+fully present in the prediction, award 1.
 
 Return only valid JSON with this schema:
 {

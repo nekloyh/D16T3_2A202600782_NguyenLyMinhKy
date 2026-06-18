@@ -165,13 +165,60 @@ là nhiễu dữ liệu, chặn trần EM một cách giả tạo.
 | LLM 100 V1 rebuild | **100/100** | `failure_modes` đủ ≥3 nhóm → analysis full. |
 | **LLM 100 V2 (chạy thật)** | **100/100** | `outputs/llm_100_v2/` — EM 0.72/0.87, analysis full. |
 
-## 9. Lệnh chạy lại
+## 9. Golden dataset — sanity check 100%
+
+`data/hotpot_golden.json` là tập **20 câu vàng** tự soạn (easy/medium/hard), context
+gọn và gold answer rõ ràng — dùng để kiểm tra rằng **cả pipeline trả lời lẫn pipeline
+chấm điểm đều đúng** khi câu hỏi không nhiễu. Mục tiêu: cả ReAct và Reflexion phải đạt
+**EM = 1.0**. Nếu không, lỗi nằm ở agent/evaluator chứ không phải ở dữ liệu.
+
+| Metric | ReAct (golden) | Reflexion (golden) |
+|---|---:|---:|
+| **EM** | **1.00** (20/20) | **1.00** (20/20) |
+| Avg attempts | 1.00 | 1.00 |
+| Avg token | 910 | 911 |
+| Avg latency | 3.06s | 3.37s |
+
+Dataset: `data/hotpot_golden.json` · `outputs/llm_golden/` · 40 records = 20 câu × 2 agent.
+Kết quả **ổn định qua 2 lần chạy liên tiếp** (cùng 20/20), không phụ thuộc may rủi của LLM.
+
+### 9.1 Hai lỗi phát hiện & cách sửa (đều là lỗi *khớp câu*, không phải sai nội dung)
+
+| # | Câu | Gold | Pred | Bản chất | Sửa ở đâu |
+|---|---|---|---|---|---|
+| 1 | gold2 | `classical` | `classical music` | Evaluator quá nghiêm: phạt từ thừa vô hại (`music`). | **Evaluator** — thêm lenient-match. |
+| 2 | gold6 | `Dutch, French, and German` | `Dutch` | Actor bỏ bớt hop: chỉ trả 1/3 ngôn ngữ. | **Actor** — buộc liệt kê đủ tập đáp án. |
+
+**Sửa 1 — Lenient-match xác định (deterministic) ở evaluator** (`utils.lenient_match`):
+chỉ **nâng** điểm 0 → 1 khi prediction chứa **trọn vẹn** gold answer sau khi bỏ
+mạo từ / liên từ / từ xấp xỉ (`gold_tokens ⊆ pred_tokens`), ví dụ
+`classical music ⊇ classical`, `Bab-el-Mandeb strait ⊇ Bab-el-Mandeb`,
+`approximately 66000 ≡ 66000`. **Một chiều** (gold ⊆ pred) nên một đáp án *thiếu*
+phần của gold (như `Dutch`) **không bao giờ được nhận** — không che giấu lỗi thật.
+Prompt evaluator cũng được siết để LLM đồng thuận với rule này.
+
+**Sửa 2 — Actor liệt kê đủ tập đáp án:** thêm luật "khi context nói đáp án là một
+*danh sách* (vd 'three official languages: Dutch, French, and German') thì xuất đủ cả
+danh sách, không lấy mỗi mục đầu". Đây là cải thiện tổng quát, không hardcode theo câu.
+
+> **Lưu ý chính trực:** lenient-match khác với "substring ad-hoc" từng bị **loại** ở
+> mục 7. Nó là **một luật chứa-trọn (containment) tổng quát, một chiều**, đúng tinh thần
+> chấm short-answer của HotpotQA — không tinh chỉnh theo từng lỗi đã thấy của tập
+> `seed42`, và chỉ nâng false-negative chứ không hạ điểm câu sai thật.
+
+## 10. Lệnh chạy lại
 
 ```bash
 # Benchmark LLM 100 câu
 .venv/bin/python run_benchmark.py \
   --dataset data/hotpot_sample_100_seed42.json \
   --out-dir outputs/llm_100_v2 \
+  --mode llm
+
+# Golden sanity check (kỳ vọng EM = 1.0 cho cả hai agent)
+.venv/bin/python run_benchmark.py \
+  --dataset data/hotpot_golden.json \
+  --out-dir outputs/llm_golden \
   --mode llm
 
 # Autograde

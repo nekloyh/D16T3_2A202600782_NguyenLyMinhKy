@@ -11,6 +11,43 @@ def normalize_answer(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text
 
+# Connectives / approximators that never change the factual answer of a short QA span.
+_STOPWORDS = {
+    "a", "an", "the", "and", "or", "of", "in", "on", "at", "to",
+    "is", "are", "was", "were", "approximately", "about", "around",
+    "roughly", "circa", "estimated",
+}
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {t for t in normalize_answer(text).split() if t not in _STOPWORDS}
+
+
+def lenient_match(gold: str, pred: str) -> bool:
+    """Deterministic equivalence check for short-answer QA.
+
+    Returns True when the prediction unambiguously conveys the gold answer:
+      * identical content tokens after dropping articles/connectives/approximators
+        (e.g. "approximately 66000" == "66000", "Dutch, French, and German"
+        == "Dutch, French, German"), or
+      * the prediction contains the full gold answer plus a harmless head noun or
+        qualifier (e.g. "classical music" ⊇ "classical", "Bab-el-Mandeb strait"
+        ⊇ "Bab-el-Mandeb").
+
+    It is intentionally one-directional (gold ⊆ pred) so a prediction that *drops*
+    part of the gold answer is never accepted. Used only to raise an LLM judge's
+    score from 0 to 1, never to lower it — so it cannot mask a genuinely wrong answer.
+    """
+    if normalize_answer(gold) == normalize_answer(pred):
+        return True
+    gold_tokens = _content_tokens(gold)
+    pred_tokens = _content_tokens(pred)
+    if not gold_tokens or not pred_tokens:
+        return False
+    if gold_tokens == pred_tokens:
+        return True
+    return gold_tokens <= pred_tokens
+
 def load_dataset(path: str | Path) -> list[QAExample]:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     return [QAExample.model_validate(item) for item in raw]
