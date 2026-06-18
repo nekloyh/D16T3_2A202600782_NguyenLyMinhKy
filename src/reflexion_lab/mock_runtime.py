@@ -1,5 +1,6 @@
 from __future__ import annotations
 from .schemas import QAExample, JudgeResult, ReflectionEntry
+from .runtime_base import RuntimeCall
 from .utils import normalize_answer
 
 FIRST_ATTEMPT_WRONG = {"hp2": "London", "hp4": "Atlantic Ocean", "hp6": "Red Sea", "hp8": "Andes"}
@@ -24,3 +25,31 @@ def evaluator(example: QAExample, answer: str) -> JudgeResult:
 def reflector(example: QAExample, attempt_id: int, judge: JudgeResult) -> ReflectionEntry:
     strategy = "Do the second hop explicitly: birthplace city -> river through that city." if example.qid == "hp2" else "Verify the final entity against the second paragraph before answering."
     return ReflectionEntry(attempt_id=attempt_id, failure_reason=judge.reason, lesson="A partial first-hop answer is not enough; the final answer must complete all hops.", next_strategy=strategy)
+
+
+class MockRuntime:
+    failure_mode_by_qid = FAILURE_MODE_BY_QID
+
+    def actor_answer(
+        self,
+        example: QAExample,
+        attempt_id: int,
+        agent_type: str,
+        reflection_memory: list[str],
+    ) -> RuntimeCall[str]:
+        value = actor_answer(example, attempt_id, agent_type, reflection_memory)
+        token_count = 320 + (attempt_id * 65) + (120 if agent_type == "reflexion" else 0)
+        latency_ms = 160 + (attempt_id * 40) + (90 if agent_type == "reflexion" else 0)
+        return RuntimeCall(value=value, token_count=token_count, latency_ms=latency_ms)
+
+    def evaluator(self, example: QAExample, answer: str) -> RuntimeCall[JudgeResult]:
+        return RuntimeCall(value=evaluator(example, answer), token_count=30, latency_ms=10)
+
+    def reflector(
+        self,
+        example: QAExample,
+        attempt_id: int,
+        answer: str,
+        judge: JudgeResult,
+    ) -> RuntimeCall[ReflectionEntry]:
+        return RuntimeCall(value=reflector(example, attempt_id, judge), token_count=120, latency_ms=50)

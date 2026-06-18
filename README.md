@@ -29,6 +29,46 @@ python run_benchmark.py --dataset data/hotpot_mini.json --out-dir outputs/sample
 python autograde.py --report-path outputs/sample_run/report.json
 ```
 
+### Chạy với OpenAI API (Version 1)
+Repo hiện hỗ trợ 2 mode:
+- `mock`: deterministic, chạy offline để kiểm tra flow/autograde nhanh
+- `llm`: gọi OpenAI API thật cho Actor, Evaluator, Reflector
+
+Tạo file `.env`:
+```bash
+OPENAI_API_KEY=sk-...
+# Tuỳ chọn, mặc định là gpt-4.1-mini
+OPENAI_MODEL=gpt-4o-mini
+```
+
+Chạy smoke test trước để tránh tốn chi phí:
+```bash
+python run_benchmark.py \
+  --dataset data/hotpot_mini.json \
+  --out-dir outputs/llm_smoke_1 \
+  --mode llm \
+  --limit 1
+```
+
+Chạy benchmark 100 mẫu:
+```bash
+python scripts/create_hotpot_sample.py \
+  --input hotpotqa.json \
+  --output data/hotpot_sample_100_seed42.json \
+  --sample-size 100 \
+  --seed 42
+
+python run_benchmark.py \
+  --dataset data/hotpot_sample_100_seed42.json \
+  --out-dir outputs/llm_run_100 \
+  --mode llm
+```
+
+Có thể đổi model trực tiếp bằng CLI:
+```bash
+python run_benchmark.py --mode llm --model gpt-4.1-mini --limit 5
+```
+
 ## Nhiệm vụ của Học viên
 
 ### Bước 1: Hiểu flow (đọc code)
