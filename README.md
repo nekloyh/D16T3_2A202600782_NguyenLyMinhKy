@@ -37,7 +37,7 @@ Repo hiện hỗ trợ 2 mode:
 Tạo file `.env`:
 ```bash
 OPENAI_API_KEY=sk-...
-# Tuỳ chọn, mặc định là gpt-4.1-mini
+# Tuỳ chọn, mặc định là gpt-4o-mini
 OPENAI_MODEL=gpt-4o-mini
 ```
 
@@ -66,7 +66,7 @@ python run_benchmark.py \
 
 Có thể đổi model trực tiếp bằng CLI:
 ```bash
-python run_benchmark.py --mode llm --model gpt-4.1-mini --limit 5
+python run_benchmark.py --mode llm --model gpt-4o-mini --limit 5
 ```
 
 ## Nhiệm vụ của Học viên

@@ -4,6 +4,50 @@ from typing import Literal
 from .mock_runtime import MockRuntime
 from .runtime_base import AgentRuntime
 from .schemas import AttemptTrace, QAExample, ReflectionEntry, RunRecord
+from .utils import normalize_answer
+
+INCOMPLETE_SIGNALS = (
+    "does not provide", "not provide", "not enough", "cannot determine",
+    "no information", "unable to", "insufficient", "not specified", "not mentioned",
+)
+
+
+def classify_failure_mode(gold_answer: str, traces: list[AttemptTrace], agent_type: str) -> str:
+    """Heuristic error analysis from the trajectory (not from the EM score).
+
+    Categorises *why* a wrong record failed using only the attempt answers and the
+    gold answer for typing — it never alters correctness, so it cannot inflate EM.
+    """
+    answers = [t.answer for t in traces]
+    if not answers:
+        return "wrong_final_answer"
+    norm_answers = [normalize_answer(a) for a in answers]
+    gold_tokens = set(normalize_answer(gold_answer).split())
+    final_tokens = set(norm_answers[-1].split())
+
+    # 1. Agent admitted missing evidence, or final answer is a strict subset of gold (a hop dropped).
+    if any(any(s in a.lower() for s in INCOMPLETE_SIGNALS) for a in answers):
+        return "incomplete_multi_hop"
+    if gold_tokens and final_tokens and final_tokens < gold_tokens:
+        return "incomplete_multi_hop"
+
+    # 2. Reflection ballooned a short answer into a full sentence (made it worse).
+    if agent_type == "reflexion" and len(answers) >= 2:
+        if len(norm_answers[-1].split()) >= 6 and len(norm_answers[-1].split()) > len(norm_answers[0].split()):
+            return "reflection_overfit"
+
+    # 3. Same answer repeated across attempts — agent stuck in a loop.
+    if len(norm_answers) >= 2 and len(set(norm_answers)) < len(norm_answers):
+        return "looping"
+
+    # 4. A different short entity than gold, with no token overlap — wrong-entity drift.
+    if final_tokens and gold_tokens and len(final_tokens) <= 6 and len(gold_tokens) <= 6 \
+            and not (final_tokens & gold_tokens):
+        return "entity_drift"
+
+    # 5. Fallback.
+    return "wrong_final_answer"
+
 
 @dataclass
 class BaseAgent:
@@ -17,7 +61,8 @@ class BaseAgent:
         reflections: list[ReflectionEntry] = []
         traces: list[AttemptTrace] = []
         final_answer = ""
-        final_score = 0
+        final_score = -1
+        seen_answers: list[str] = []
         for attempt_id in range(1, self.max_attempts + 1):
             answer_call = runtime.actor_answer(example, attempt_id, self.agent_type, reflection_memory)
             answer = answer_call.value
@@ -33,11 +78,21 @@ class BaseAgent:
                 token_estimate=token_estimate,
                 latency_ms=latency_ms,
             )
-            final_answer = answer
-            final_score = judge.score
+            # Keep the best answer across attempts; among ties keep the earliest
+            # so a later reflection drift cannot overwrite a cleaner early answer.
+            if judge.score > final_score:
+                final_answer = answer
+                final_score = judge.score
             if judge.score == 1:
                 traces.append(trace)
                 break
+            # Early stop: the actor is repeating a wrong answer, so further
+            # reflection only burns tokens without changing the outcome.
+            normalized = normalize_answer(answer)
+            if normalized in seen_answers:
+                traces.append(trace)
+                break
+            seen_answers.append(normalized)
             if self.agent_type == "reflexion" and attempt_id < self.max_attempts:
                 reflection_call = runtime.reflector(example, attempt_id, answer, judge)
                 reflection = reflection_call.value
@@ -49,7 +104,7 @@ class BaseAgent:
             traces.append(trace)
         total_tokens = sum(t.token_estimate for t in traces)
         total_latency = sum(t.latency_ms for t in traces)
-        failure_mode = "none" if final_score == 1 else runtime.failure_mode_by_qid.get(example.qid, "wrong_final_answer")
+        failure_mode = "none" if final_score == 1 else classify_failure_mode(example.gold_answer, traces, self.agent_type)
         return RunRecord(qid=example.qid, question=example.question, gold_answer=example.gold_answer, agent_type=self.agent_type, predicted_answer=final_answer, is_correct=bool(final_score), attempts=len(traces), token_estimate=total_tokens, latency_ms=total_latency, failure_mode=failure_mode, reflections=reflections, traces=traces)
 
 class ReActAgent(BaseAgent):
